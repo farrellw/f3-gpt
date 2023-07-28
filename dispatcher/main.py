@@ -1,7 +1,6 @@
 # [START functions_slack_setup]
 import os
 
-import requests
 from flask import jsonify
 import functions_framework
 from slack.signature import SignatureVerifier
@@ -26,10 +25,9 @@ def verify_signature(request):
 
 # [END functions_verify_webhook]
 
-def initial_receipt(m):
+def initial_receipt():
     message = {
-        "response_type": "in_channel",
-        "text": f"We got your message, processing: {m}",
+        "text": f"Message received, forwarding to to F3-GPT for processing",
         "attachments": [],
     }
     return message
@@ -41,8 +39,6 @@ def dispatcher(request):
 
     verify_signature(request)
 
-    text = request.form["text"]
-
     topic_path = publisher.topic_path(PROJECT_ID, "f3-gpt-queue")
 
     message_json = json.dumps(
@@ -50,7 +46,9 @@ def dispatcher(request):
             "data": {
                 "message": {
                     "text": request.form["text"],
-                    "url": request.form.get("response_url")
+                    "url": request.form.get("response_url"),
+                    "channel_id": request.form.get("channel_id"),
+                    "requesting_user": request.form.get("user_id")
                 },
             }
         }
@@ -62,11 +60,8 @@ def dispatcher(request):
         publish_future = publisher.publish(topic_path, data=message_bytes)
         publish_future.result()  # Verify the publish succeeded
         
-        m = initial_receipt(request.form["text"])
+        m = initial_receipt()
         return jsonify(m)
     except Exception as e:
         print(e)
         return (e, 500)
-
-
-    

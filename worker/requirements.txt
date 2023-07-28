@@ -5,3 +5,4 @@ slackclient==2.9.4
 openai==0.27.8
 mysql-connector-python==8.1.0
 requests==2.31.0
+slack-sdk==3.21.3

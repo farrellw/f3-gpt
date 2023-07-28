@@ -14,4 +14,3 @@
 .deploy.sh
 *.venv
 node_modules
-#!include:.gitignore
