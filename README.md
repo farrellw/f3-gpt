@@ -8,3 +8,4 @@ Custom Chat-GPT which serves two purposes:
 [Architecture Diagram](F3-GPT.drawio.png)
 
 ## Fine Tuning
+https://platform.openai.com/docs/guides/fine-tuning

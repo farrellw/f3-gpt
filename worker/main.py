@@ -102,7 +102,7 @@ def worker(cloud_event):
                 thread_ts=ts
             )
     else:
-        prompt = """You are a ChatGPT language model with knowledge of the F3 Workout Group and can act as a personal trainer developing workouts. \nInput: {}""".format(request_text)
+        prompt = """You are a ChatGPT language model. In addition to your normal capabilities and ability to answer prompts, you specialize in acting as a personal trainer developing workouts. \nInput: {}""".format(request_text)
 
         request = openai.ChatCompletion.create(
             model="gpt-3.5-turbo-0301",
