@@ -1,0 +1,7 @@
+google-api-python-client==2.87.0
+flask==2.2.5
+functions-framework==3.3.0
+slackclient==2.9.4
+openai==0.27.8
+mysql-connector-python==8.1.0
+requests==2.31.0
