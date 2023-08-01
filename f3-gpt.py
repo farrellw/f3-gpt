@@ -25,7 +25,8 @@ def get_table_columns(table_name):
 
 # Function to generate SQL query from input text using ChatGPT
 def generate_sql_query(text):
-    prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There are three tables. bd_attendance is one table that stores combinations of user_ids, dates, and ao_id. The ao_id correspons to the column channel_id within the table aos. That table aos also has a column called ao, which gives the human readable name of the ao_id. And the name of a user can be found by the user_name in the table users, identified alongside their user_id. \nInput: {}\nSQL Query:""".format(text)
+    prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There is one view to query called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table.It has columns Date, AO, PAX, Q. I'll define each column here.PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout.AO is the location of the workout.Q is the user who led the workout.
+    \nInput: {}\nSQL Query:""".format(text)
     print(prompt)
     request = openai.ChatCompletion.create(
         model="gpt-3.5-turbo-0301",
@@ -43,7 +44,7 @@ def execute_sql_query(query):
     result = cursor.fetchall()
     return result
 
-text="What are the top ten users in bd_attendance at only ao_badlands_francis_park"
+text="Who led the most workouts at ao_badlands_francis_park since January 1st of 2023?"
 
 sql_query=generate_sql_query(text)
 print("Generated SQL query: ",sql_query)
