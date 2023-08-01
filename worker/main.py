@@ -23,7 +23,8 @@ class DecimalEncoder(json.JSONEncoder):
 
 # Function to generate SQL query from input text using ChatGPT
 def generate_sql_query(text):
-    prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There are three tables. bd_attendance is one table that has four columns: user_id, date, ao_id, and q_user_id. The four columsn are described as such. The date column in bd_attendance is stored as YYYY-MM-DD. The ao_id references a record in the table `aos`, and its value is found under the column 'channel_id' within the table `aos`. That table aos also has a column called `ao`, which gives the human readable name of the ao_id/channel_id. The user_id and q_user_id columns within the bd_attendance are matched by the user_id in the table users, which table also contains a user_name which is a human readable name of the user_id. When possible, return user_name instead of user_id and ao instead of channel_id \nInput: {}\nSQL Query:""".format(text)
+    prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There is one view to query called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table.It has columns Date, AO, PAX, Q. I'll define each column here.PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout.AO is the location of the workout.Q is the user who led the workout.
+    \nInput: {}\nSQL Query:""".format(text)
 
     request = openai.ChatCompletion.create(
         model="gpt-3.5-turbo-0301",
