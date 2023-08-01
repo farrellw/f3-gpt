@@ -19,12 +19,23 @@ class DecimalEncoder(json.JSONEncoder):
     if isinstance(obj, Decimal):
       return str(obj)
     return json.JSONEncoder.default(self, obj)
+  
+
+def generate_prompt_1(text): 
+   prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There is one view to query called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table.It has columns Date, AO, PAX, Q. I'll define each column here.PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout.AO is the location of the workout ( The current locations are blackops, ao_backyard_tower_grove, ao_bunker_lindenwood_park, ao_battery_lafayette_park, ao_badlands_francis_park, ao_bear_pit_carondelet_park, qsource, rucking, ao_southside_shuffle_tilles_park, ao_brickyard_turtle_park, c25k. More locations may be added later, but for example if someone says bear pit they mean ao_bear_pit_carondelet_park ). Q is the user who led the workout.
+    \nInput: {}\nSQL Query:""".format(text)
+   return prompt
 
 
+def generate_prompt_2(prompt_1, response, sql_results):
+   prompt = """
+   I started with the following prompt: {}\nyou responded with: {}. After executing the SQL query I received {}. Can you turn the response into a more human readable and conversational response.
+    """.format(prompt_1, response, sql_results)
+   return prompt
+   
 # Function to generate SQL query from input text using ChatGPT
 def generate_sql_query(text):
-    prompt = """You are a ChatGPT language model that can generate SQL queries. Please provide a natural language input text, and I will generate the corresponding SQL query for you. There is one view to query called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table.It has columns Date, AO, PAX, Q. I'll define each column here.PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout.AO is the location of the workout ( The current locations are blackops, ao_backyard_tower_grove, ao_bunker_lindenwood_park, ao_battery_lafayette_park, ao_badlands_francis_park, ao_bear_pit_carondelet_park, qsource, rucking, ao_southside_shuffle_tilles_park, ao_brickyard_turtle_park, c25k. More locations may be added later, but for example if someone says bear pit they mean ao_bear_pit_carondelet_park ). Q is the user who led the workout.
-    \nInput: {}\nSQL Query:""".format(text)
+    prompt = generate_prompt_1(text)
 
     request = openai.ChatCompletion.create(
         model="gpt-3.5-turbo-0301",
@@ -73,10 +84,11 @@ def worker(cloud_event):
             password=os.getenv("SQL_PASSWORD"),
             database=os.getenv("SQL_DATABASE")
         )
-        cursor = conn.cursor()    
+        cursor = conn.cursor()
+
+        prompt_1 = generate_prompt_1(request_text)
 
         f3_gpt_response = generate_sql_query(request_text)
-
 
         response = client.chat_postMessage(
                 channel=channel_id,
@@ -91,17 +103,32 @@ def worker(cloud_event):
         conn.close()
 
         try:
-            response = client.chat_postMessage(
-                channel=channel_id,
-                text=f'Response: {json.dumps(result)}',
-                thread_ts=ts
-            )
+            result_as_json = json.dumps(result)
+            
         except Exception as e:
-            response = client.chat_postMessage(
-                channel=channel_id,
-                text=f'Response: {json.dumps(result, cls=DecimalEncoder)}',
-                thread_ts=ts
-            )
+            result_as_json = json.dumps(result, cls=DecimalEncoder)
+
+
+        response = client.chat_postMessage(
+            channel=channel_id,
+            text=f'DB Response: {result_as_json}',
+            thread_ts=ts
+        )
+        rrr = generate_prompt_2(prompt_1, f3_gpt_response, result_as_json)
+
+        request = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo-0301",
+        messages=[
+            {"role": "user", "content": rrr},
+        ])
+        
+        human_readable = request['choices'][0]['message']['content']
+    
+        response = client.chat_postMessage(
+            channel=channel_id,
+            text=human_readable,
+            thread_ts=ts
+        )
     else:
         prompt = """You are a ChatGPT language model. In addition to your normal capabilities and ability to answer prompts, you specialize in acting as a personal trainer developing workouts. \nInput: {}""".format(request_text)
 
