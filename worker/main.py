@@ -14,10 +14,59 @@ from langchain.utilities import SQLDatabase
 from langchain_experimental.sql import SQLDatabaseChain
 from langchain.prompts.prompt import PromptTemplate
 
+from langchain.chains import ConversationChain
+from langchain.chains.router.llm_router import LLMRouterChain, RouterOutputParser
+from langchain.chains.router.base import MultiRouteChain, RouterChain
+from langchain.chains.router.multi_prompt_prompt import MULTI_PROMPT_ROUTER_TEMPLATE
+from langchain.chains.llm import LLMChain
+from typing import List, Mapping
+
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 from decimal import Decimal
+
+MULTI_SQL_ROUTER_TEMPLATE = """
+Given a raw text input to a language model select the model prompt best suited for
+the input. You will be given the names of the available prompts and a description of
+what the prompt is best suited for.
+
+<< FORMATTING >>
+Return a markdown code snippet with a JSON object formatted to look like:
+```json
+{{{{
+    "destination": string \\ name of the prompt to use or "DEFAULT"
+    "next_inputs": string \\ the original input
+}}}}
+```
+
+REMEMBER: "destination" MUST be one of the candidate prompt names specified below OR
+it can be "DEFAULT" if the input is not well suited for any of the candidate prompts.
+REMEMBER: "next_inputs" can just be the original input
+
+<< CANDIDATE PROMPTS >>
+{destinations}
+
+<< INPUT >>
+{{input}}
+
+<< OUTPUT >>
+"""
+
+class MultiSqlChain(MultiRouteChain):
+    """A multi-route chain that uses an LLM router chain to choose amongst SQL chains."""
+
+    router_chain: RouterChain
+    """Chain for deciding a destination chain and the input to it."""
+    destination_chains: Mapping[str, SQLDatabaseChain]
+    """Map of name to candidate chains that inputs can be routed to."""
+    default_chain: LLMChain
+    """Default chain to use when router doesn't map input to one of the destinations."""
+
+    @property
+    def output_keys(self) -> List[str]:
+        return ["text"]
+    
 
 class DecimalEncoder(json.JSONEncoder):
   def default(self, obj):
@@ -58,10 +107,10 @@ def execute_sql_query(cursor, query):
     return result
 
 def langchang_implementation(input):
-    db = SQLDatabase.from_uri(os.getenv("FULL_CONNECTION_URI"))
+    db = SQLDatabase.from_uri(os.getenv("FULL_CONNECTION_URI"), max_string_length=10000)
     llm = OpenAI(temperature=0, verbose=True)
-   
-    _DEFAULT_TEMPLATE = """Given an input question, first create a syntactically correct msyql query to run, then look at the results of the query and return the answer.
+
+    backblast_template = """Given an input question, first create a syntactically correct msyql query to run, then look at the results of the query and return the answer.
     Use the following format:
 
     Question: "Question here"
@@ -69,19 +118,75 @@ def langchang_implementation(input):
     SQLResult: "Result of the SQLQuery"
     Answer: "Final answer here"
 
-    There is one view to query called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table.It has columns Date, AO, PAX, Q. I'll define each column here.PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout.AO is the location of the workout ( The current locations are blackops, ao_backyard_tower_grove, ao_bunker_lindenwood_park, ao_battery_lafayette_park, ao_badlands_francis_park, ao_bear_pit_carondelet_park, qsource, rucking, ao_southside_shuffle_tilles_park, ao_brickyard_turtle_park, c25k. More locations may be added later, but for example if someone says bear pit they mean ao_bear_pit_carondelet_park ). Q is the user who led the workout. Because the table is attendance, if ten PAX attended a workout on the same day, the Q would be the same for all ten of these user entries. However it was a single workout, so when counting times a user led a workout take the concatenation of date and Q.
+    The view to query is called backblast. This view contains the following columns: Date, AO, Q, pax_count, fngs, and backblast. The date is formatted as YYYY-MM-DD. The AO is the location of the workout ( The current locations are blackops, ao_backyard_tower_grove, ao_bunker_lindenwood_park, ao_battery_lafayette_park, ao_badlands_francis_park, ao_bear_pit_carondelet_park, qsource, rucking, ao_southside_shuffle_tilles_park, ao_brickyard_turtle_park, c25k. More locations may be added later, but for example if someone says bear pit they mean ao_bear_pit_carondelet_park ). Q is the user who led the workout. pax_count is how many people attended the workout. fngs contains plaintext information if any new guys came to the workout. backblast column contains the text of what actually happened at the workout. Return the whole backblast information found in the backblast column.
 
-    Question: {input}"""
-    
-    PROMPT = PromptTemplate(
-        input_variables=["input"], template=_DEFAULT_TEMPLATE
+    Question:{input}"""
+
+    attendance_template = """Given an input question, first create a syntactically correct msyql query to run, then look at the results of the query and return the answer.
+    Use the following format:
+
+    Question: "Question here"
+    SQLQuery: "SQL Query to run"
+    SQLResult: "Result of the SQLQuery"
+    Answer: "Final answer here"
+
+    There is one view called attendance_view. The view itself is a record of attendance at workouts for an organization called "F3". Each time a user attends a workout, there is an entry in the table. It has columns Date, AO, PAX, Q. I'll define each column here. PAX is another name for user. So if a user was called "Catalina", then "Catalina" would be in the PAX column.Date is the date that the user/PAX attended the workout. AO is the location of the workout ( The current locations are blackops, ao_backyard_tower_grove, ao_bunker_lindenwood_park, ao_battery_lafayette_park, ao_badlands_francis_park, ao_bear_pit_carondelet_park, qsource, rucking, ao_southside_shuffle_tilles_park, ao_brickyard_turtle_park, c25k. More locations may be added later, but for example if someone says bear pit they mean ao_bear_pit_carondelet_park ). Q is the user who led the workout. Because the table is attendance, if ten PAX attended a workout on the same day, the Q would be the same for all ten of these user entries. However it was a single workout, so when counting times a user led a workout take the concatenation of date and Q. 
+
+    Question:{input}"""
+
+
+    prompt_infos = [
+        {
+            "name": "backblast",
+            "description": "Good for answering questions about what happened at previous workouts",
+            "prompt_template": backblast_template,
+            "return_direct": True
+        },
+        {
+            "name": "workout_attendance",
+            "description": "Good for answering questions about how many workouts a person has attended, how many a person has led/Q'd",
+            "prompt_template": attendance_template,
+            "return_direct": False
+        },
+    ]
+
+    destinations = [f"{p['name']}: {p['description']}" for p in prompt_infos]
+    destinations_str = "\n".join(destinations)
+    router_template = MULTI_SQL_ROUTER_TEMPLATE.format(
+        destinations=destinations_str
+    )
+    router_prompt = PromptTemplate(
+        template=router_template,
+        input_variables=["input"],
+        output_parser=RouterOutputParser(next_inputs_inner_key="input"),
+    )
+    router_chain = LLMRouterChain.from_llm(llm, router_prompt)
+
+    destination_chains = {}
+    for p_info in prompt_infos:
+        name = p_info["name"]
+        prompt_template = p_info["prompt_template"]
+        prompt = PromptTemplate(template=prompt_template,
+                                input_variables=["input"],
+                                )
+        chain = SQLDatabaseChain.from_llm(llm, db, prompt=prompt,
+                                            output_key="text",
+                                            # verbose=True,
+                                            input_key="input",
+                                            return_direct=p_info["return_direct"],
+                                            return_intermediate_steps=True
+                                            )
+        destination_chains[name] = chain
+    _default_chain = ConversationChain(llm=llm, output_key="text")
+
+    chain = MultiSqlChain(
+        router_chain=router_chain,
+        destination_chains=destination_chains,
+        default_chain=_default_chain,
+        verbose=True,
     )
     
-    db_chain = SQLDatabaseChain.from_llm(llm, db, verbose=True, prompt = PROMPT, use_query_checker=True)
-    
-    r = db_chain.run(input)
-
-    return r
+    return chain.run(input)
 
 # Triggered from a message on a Cloud Pub/Sub topic.
 @functions_framework.cloud_event
@@ -160,30 +265,14 @@ def worker(cloud_event):
             text=human_readable,
             thread_ts=ts
         )
-    elif "[langchain]" in request_text.lower():
-        human_readable = langchang_implementation(request_text)
+    else:
+        r = langchang_implementation(request_text)
+        print(r)
         response = client.chat_postMessage(
             channel=channel_id,
-            text=human_readable,
+            text=r,
             thread_ts=ts
         )
-    else:
-        prompt = """You are a ChatGPT language model. In addition to your normal capabilities and ability to answer prompts, you specialize in acting as a personal trainer developing workouts. \nInput: {}""".format(request_text)
-
-        request = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo-0301",
-            messages=[
-                {"role": "user", "content": prompt},
-            ]
-        )
-        f3_gpt_response = request['choices'][0]['message']['content']    
-
-        print(f3_gpt_response)
-
-        response = client.chat_postMessage(
-                channel=channel_id,
-                text=f'Response: {f3_gpt_response}',
-                thread_ts=ts
-            )  
+        
         
 # [END functions_slack_search]
