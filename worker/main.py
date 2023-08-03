@@ -144,7 +144,7 @@ def langchang_implementation(input):
         },
         {
             "name": "workout_attendance",
-            "description": "Good for answering questions about how many workouts a person has attended, how many a person has led/Q'd",
+            "description": "Good for answering questions about counts and leaaders, how many workouts a person has attended, how many a person has led/Q'd",
             "prompt_template": attendance_template,
             "return_direct": False
         },
